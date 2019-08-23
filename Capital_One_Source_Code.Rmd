@@ -1,0 +1,446 @@
+---
+title: "Airbnb Zillow Data"
+author: "Keerthi Gopalakrishnan"
+output:
+  html_document:
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Airbnb - Zillow Profitable Zipcode Analysis{.tabset}
+
+#### **Introduction**
+
+##### **Objective**
+  
+  The objective of this Data Challenge is to analyze the Airbnb and Zillow datasets for a real estate client, and suggest the most profitable zipcodes in New York city at which 2 bhks can be purchased and rented out on a short term.
+  
+#####  **What is being addressed:**
+
+1) **Quality of Data**: The real world datasets contains several inconsistencies that will be dealt with.
+2) **Data Munging**: This section concentrates on linking and making the data homogeneous in terms of units, in a scalable manner
+3) **Visual analysis**: This sections provides charts and important Business points on most profitable zipcodes
+4) **Summary of Strategy**: This chunk concentrates on providing further business insights into how the client can achieve greater profits by employing the suggested strategies.
+
+#### **Quality Check & Data Munging**
+
+```{r,warning=FALSE,message=FALSE}
+
+Sys.setenv('MAPBOX_TOKEN' = "pk.eyJ1Ijoia2VlcnRoaWdrbiIsImEiOiJjanNocXk5MnUxaGVpM3lzNzJ4NHVsMXJyIn0.ZED49Fygwu7s_XrEbZzcJA")
+
+
+pkgs <- c(pkgs <- c("data.table","dplyr","ggplot2","tidyr","naniar",
+                    "GGally","Matrix","plotly","maps"))
+
+
+for (pkg in pkgs) {
+if (!(pkg %in% installed.packages()[, "Package"])) {
+install.packages(pkg)
+}
+}
+
+
+library("data.table")
+library("dplyr")
+library("ggplot2")
+library("tidyr")
+library("GGally")
+library("Matrix")
+library("plotly")
+library("maps")
+library("naniar")
+
+# input file
+
+system_path <- getwd()
+airbnb_file <- paste(system_path,"/listings.csv" , sep = "")
+zillow_file <- paste(system_path,"/Zip_Zhvi_2bedroom.csv" , sep = "")
+
+airbnb <- fread(airbnb_file,header = TRUE, sep = "," , stringsAsFactors = TRUE, na.strings = c("","NA"))
+
+zillow <- fread(zillow_file,header = TRUE, sep = "," , stringsAsFactors = TRUE, na.strings = c("","NA"))
+
+
+
+```
+
+
+#####Summary of the datasets:
+
+
+**Airbnb: Dimension:**
+```{r,warning=FALSE,message=FALSE}
+dim(airbnb)
+```
+
+
+**Zillow: Dimension:**
+```{r,warning=FALSE,message=FALSE}
+dim(zillow)
+```
+
+From above two results it can be seen that the number of parameters and observations are many. Hence the following operations will be done in order to ease the Exploratory Data process:
+
+1. __Filter out Unnecessary Rows:__ The airbnb and zillow datasets are filtered to retain only new york, and 2 bedroom observations.
+
+```{r,warning=FALSE,message=FALSE}
+
+airbnb$state <- (gsub("New York","NY",airbnb$state))
+airbnb$state <- (gsub("ny","NY",airbnb$state))
+airbnb_filtered <- airbnb[which(airbnb$state=="NY" & airbnb$bedrooms == 2),]
+zillow_filtered <- zillow[which(zillow$State =="NY"),]
+
+```
+
+2. **Merge the datasets based on Zipcode:** The zipcode is the only common factor between the two datasets. Hence an inner join of these two datasets will be done based on zipcode
+
+```{r,warning=FALSE,message=FALSE}
+
+# rename variable Region in zillow to allow merge
+colnames(zillow_filtered)[2] <- "zipcode"
+
+# convert zipcode to char in zillow
+zillow_filtered$zipcode <- as.character(zillow_filtered$zipcode)
+airbnb_filtered$zipcode <- as.character(airbnb_filtered$zipcode)
+
+# merge two datasets by zipcode
+merge_data <- merge(airbnb_filtered, zillow_filtered , by = "zipcode" )
+
+```
+
+3. **Parameter Retention:** This step ensures to select only those parameters from the merged dataset that play an instrumental role in the analysis
+
+
+```{r,warning=FALSE,message=FALSE}
+
+merge_data_fil <- merge_data
+merge_data_fil <- merge_data_fil[,c(1,39,42,49,50,60,61,65,68,69,77,80,356)]
+
+```
+
+##### Exploratory Data Analysis of Filtered Data Set
+
+**Merge & filtered Data set: Dimension, Column Names, and Structure:**
+
+```{r,warning=FALSE,message=FALSE}
+glimpse(merge_data_fil)
+```
+
+**Missing Value Analysis**
+
+```{r,warning=FALSE,message=FALSE}
+gg_miss_var(merge_data_fil , show_pct = TRUE) + labs(y = "Percentage")
+```
+
+**Summary of Data**
+
+```{r,warning=FALSE,message=FALSE}
+summary(merge_data_fil)
+```
+
+**Key Observations:**
+
+* The variables price and cleaning fee are factors, and should be converted to numeric to enable mathematical calculations
+* Square feet has greater than 90% missing values, and imputing this data can lead to incorrect analysis, hence this variable will be left out.
+* Cleaning fee is an important parameter in profit calculation, and hence the less than 25% values will be imputed
+* The latest cost of the properties has been chosen for further calculations
+* The cost of the property in 2017-06 cannot be directly compared with the daily price and cleaning fee value
+
+#### **Data Cleaning and EDA - Final dataset**
+
+**Based on the points summarised in the previous section, the data will be cleaned in the following steps:**
+
+<br />
+<br />
+
+**1. Remove $ symbol from price and cleaning fee and convert to numeric values**
+
+```{r,warning=FALSE,message=FALSE}
+
+merge_data_fil_clean <- merge_data_fil
+
+merge_data_fil_clean$price <- (gsub("\\$","",merge_data_fil_clean$price))
+merge_data_fil_clean$price <- (gsub("\\,","",merge_data_fil_clean$price))
+merge_data_fil_clean$cleaning_fee <- (gsub("\\$","",merge_data_fil_clean$cleaning_fee))
+merge_data_fil_clean$cleaning_fee <- (gsub("\\,","",merge_data_fil_clean$cleaning_fee))
+
+merge_data_fil_clean$price <- as.numeric(merge_data_fil_clean$price)
+merge_data_fil_clean$cleaning_fee <- as.numeric(merge_data_fil_clean$cleaning_fee)
+
+
+```
+
+
+**2. Impute Missing values into cleaning fee: from summary, the mean, median, and mode are almost the same values, hence median is chosen**
+
+```{r,warning=FALSE,message=FALSE}
+
+merge_data_fil_clean$cleaning_fee[is.na(merge_data_fil_clean$cleaning_fee)] <- median(merge_data_fil_clean$cleaning_fee , na.rm = TRUE)
+
+```
+
+Summary of dataset:
+
+```{r,warning=FALSE,message=FALSE}
+
+summary(merge_data_fil_clean)
+
+```
+
+Boxplot of price parameter:
+
+```{r,warning=FALSE,message=FALSE}
+
+k = boxplot(merge_data_fil_clean$price, range = 4)
+
+```
+
+__Key Obervation:__
+
+* The price parameter has extreme maximum values. From the boxplot it can be seen that there are many outliers. From a business point of view, this will be treated as an erreneous input value and the top 10 % of these outliers will be discarded as step 3 of cleaning
+
+**3. Discarding outliers in Price: With this step the outliers have now been discarded**
+
+```{r,warning=FALSE,message=FALSE}
+
+c1 <- which(merge_data_fil_clean$price %in% k$out)
+
+merge_data_fil_clean <- merge_data_fil_clean[-c(c1),]
+
+```
+
+**4. Data Unit Conversion & New Parameter creation: The price and cleaning fee is per day, where as the cost of the property is the total cost.**
+
+Key Assumptions:
+
+* The price for each year has been has been calculated based on the assumption that occupancy rate is 0.75
+* The cleaning fee for each year has been calculated on the assumption that rate of booking is 0.375 (half of 0.75 , the mode of min nights is 2, and 0.75/2 = 0.375)
+* Revenue has been analysed for 10 years from day of purchase
+* Other costs such as furnishing, wifi, power bill, etc has not been considered in this analysis and will consider to be constant across all observations. The revenue is being calculated from price and cleaning-fee only.
+
+Hence two **new parameters** will be created for further analysis:
+
+* __Revenue__
+
+**Formula:**   $${ ( (price*0.75*365) + (cleaning-fee*0.375*365) )}$$
+
+* __Years_to_start_profiting__
+
+**Formula:**   $$\frac{(Cost-of-property-in-2017-06)}{revenue}$$
+
+* __Profit__ in predefined fixed number of years.
+
+**Formula:**   $${10*(revenue)-(Cost-of-property-in-2017-06)}$$
+
+```{r,warning=FALSE,message=FALSE}
+
+merge_data_fil_clean$revenue <- merge_data_fil_clean$price * (0.75 * 365) + merge_data_fil_clean$cleaning_fee * (0.375 * 365)
+
+merge_data_fil_clean$Years_to_start_profiting <- merge_data_fil_clean$`2017-06`/merge_data_fil_clean$revenue
+
+merge_data_fil_clean$profit <-  -(merge_data_fil_clean$`2017-06`) + (10 * merge_data_fil_clean$revenue)
+
+Final_Dataset <- merge_data_fil_clean
+
+```
+
+
+<u><center> **Final Data Set Analysis** </center></u>
+
+<br />
+
+**1. Final Data Set: Dimension, Column Names, and Structure:**
+
+```{r,warning=FALSE,message=FALSE}
+glimpse(Final_Dataset)
+```
+
+**2. Missing Value Analysis**
+
+```{r,warning=FALSE,message=FALSE}
+gg_miss_var(Final_Dataset , show_pct = TRUE) + labs(y = "Percentage")
+```
+
+**3. Summary of Data**
+
+```{r,warning=FALSE,message=FALSE}
+summary(Final_Dataset)
+```
+
+**Key Observations:**
+
+* There are 16 variables and 1220 observations in the final set
+* 75% of the revenue observations are negative, indicating that they have not made profits yet
+* Maximum number of zipcodes belong to Manhattan and Brooklyn neighbourhoods
+* There are 22 unique zipcodes
+
+#### **Visual Data Narrative**
+
+**1. Analyse top 10 Zipcodes based on Years_to_start_profiting**
+
+```{r,warning=FALSE,message=FALSE}
+
+Final_Dataset <- Final_Dataset[order(Years_to_start_profiting),]
+top_10 <- head(Final_Dataset, 10)
+
+
+plot_ly(y=top_10$zipcode, x=top_10$Years_to_start_profiting ,type="scatter", mode="markers+lines" , color = top_10$neighbourhood_group_cleansed,
+        text = ~paste('Profit in 10 years: ', top_10$profit,
+                      'Revenue: ', top_10$revenue,
+                      '</br> Street: ', top_10$street,
+                      '</br> Number of reviews: ', top_10$number_of_reviews,
+                      '</br> Cost: ', top_10$`2017-06`,
+                      '</br> Price/night: ', top_10$price)
+) %>% 
+  layout(
+    title = "Zipcode quickest to gain Profits ",
+            xaxis = list(title = "Years_to_start_profiting"),
+            yaxis = list(title = "Zipcodes")
+    )
+
+```
+
+**Key Business Insights**
+
+* The above chart clearly shows us that zipcodes 11215, 10312, 10025, 11434, 10036, 10305, 11231 are the ones that recoup the entire money spent on the property the earliest.
+* The quickest being 11215 with 4.88 years, and 10312 with 4.94 years.
+* That is, from the 5th year approximately zipcodes 10312 and 11215 will bring profits to the client
+* Each neighbourhood has different zipcodes in it, with the colour coding scheme, it can be seen that Staten Island and Brooklyn perform the best
+* On hovering over the point; details such as street, number of reviews, cumulative income in shown years, and cost can be seen
+
+**2. Map View of top 10 Zipcodes based on Years_to_start_profiting**
+
+```{r,warning=FALSE,message=FALSE}
+
+
+p <- top_10 %>%
+  plot_mapbox(lat = ~latitude, lon = ~longitude,
+              split = ~ (street), size=2,
+              mode = 'scattermapbox',
+              text=~paste('Profit in 10 years: ', top_10$profit,
+                          '</br> Revenue Each Year: ', top_10$revenue,
+                      '</br> Number of reviews: ', top_10$number_of_reviews,
+                      '</br> Cost: ', top_10$`2017-06`,
+                      '</br> Price/night: ', top_10$price)) %>%
+  layout(title = 'airbnb',
+         font = list(color='white'),
+         plot_bgcolor = '#191A1A', paper_bgcolor = '#191A1A',
+         mapbox = list(style = 'dark',
+                       zoom = 10,
+                       center = list(lat = median(top_10$latitude),
+                                     lon = median(top_10$longitude))),
+         legend = list(orientation = 'h',
+                       font = list(size = 8)),
+         margin = list(l = 25, r = 25,
+                       b = 25, t = 25,
+                       pad = 2))
+  
+p
+
+```
+
+**Key Business Insights**
+
+* The above chart gives great understanding of probable reasons behind these zipcodes being in the top 10.
+* Most of these zipcodes are very close to International airports
+* Almost all are along the coast line giving it greater scenic view
+* 10312 - This zipcode brings profit mainly because the property costs much lesser, and it is quite far from the prime city areas, travelling can be incovenient for those who don't have personal vehicles
+* 11215 - This zipcode is closer to the heart of the city. Close to the subway.
+* 10025 - This zipcode is in the heart of the city. Has Central Park View. Several globally known restaurants.
+
+**3. Analyse top 10 Zipcodes based on Profit**
+
+```{r,warning=FALSE,message=FALSE}
+
+Final_Dataset <- Final_Dataset[order(profit),]
+top_10_r <- tail(Final_Dataset, 10)
+
+
+plot_ly(y=top_10_r$zipcode, x=top_10_r$profit ,type="scatter", mode="markers+lines" , color = top_10_r$neighbourhood_group_cleansed,
+        text = ~paste('Profit in 10 years: ', top_10_r$profit,
+                      'Revenue: ', top_10_r$revenue,
+                      '</br> Street: ', top_10_r$street,
+                      '</br> Number of reviews: ', top_10_r$number_of_reviews,
+                      '</br> Cost: ', top_10_r$`2017-06`,
+                      '</br> Price/night: ', top_10_r$price)) %>% 
+          layout(
+            title = "Zipcode with Best Profit in 10 Years ",
+            xaxis = list(title = "Profit"),
+            yaxis = list(title = "Zipcodes"))
+
+```
+
+**Key Business Insights**
+
+* When it comes to profit, Queens is no more a suggested neighbourhood.
+* 10025 is the best profit spinner, 11215 is the second best profit spinner
+* Both Manhattan and Brooklyn are prime  areas to have properties in, given the close proximity to several services, scenic places, and restaurants
+
+**4. Map View of top 10 Zipcodes based on Profit**
+
+```{r,warning=FALSE,message=FALSE}
+
+
+p <- top_10_r %>%
+  plot_mapbox(lat = ~latitude, lon = ~longitude,
+              split = ~ (street), size=2,
+              mode = 'scattermapbox',
+              text=~paste('Profit in 10 years: ', top_10_r$profit,
+                          '</br> Revenue Each Year: ', top_10_r$revenue,
+                      '</br> Number of reviews: ', top_10_r$number_of_reviews,
+                      '</br> Cost: ', top_10_r$`2017-06`,
+                      '</br> Price/night: ', top_10_r$price)) %>%
+  layout(title = 'airbnb',
+         font = list(color='white'),
+         plot_bgcolor = '#191A1A', paper_bgcolor = '#191A1A',
+         mapbox = list(style = 'dark',
+                       zoom = 10,
+                       center = list(lat = median(top_10_r$latitude),
+                                     lon = median(top_10_r$longitude))),
+         legend = list(orientation = 'h',
+                       font = list(size = 8)),
+         margin = list(l = 25, r = 25,
+                       b = 25, t = 25,
+                       pad = 2))
+  
+p
+
+```
+
+**Key Business Insights**
+
+* 4 out of 7 zipcodes are in the Manhattan, Brooklyn neighbourhood
+* Great transport services in this area
+* Close proximity to LGA airport (zoom into map)
+* Great View from apartment
+
+#### **Summary**
+
+**Key Data Quality Insights**
+
+* New York state code in airbnb dataset is in multiple formats such as 'ny' , 'NY', 'new york' . This was cleaned and combined into code 'NY'
+* Price and cleaning fee needed for revenue/profit calculation has '$' in it, and is a character. This is converted to numeric. Cleaning fee had 20% missing values which were then imputed based on median.
+* Several zipcodes from airbnb were not there in zillow, and vice versa, only 22 unique zipcodes have found to be common between the two datasets
+* Price has some outliers, top 10% of that that has been removed to receive best results.
+
+**Key Assumptions**
+
+* Rate of occupancy has been taken as 0.75 in a year
+* Rate of booking has been taken as 0.375 in a year. As the mode of min nights is 2, the 0.75 value has been divided by 2 to get 0.375
+* Remaining costs and income has been assumed to be constant accross all observations.
+* The profit has been calculated over 10 years for all zipcodes.
+* The latest cost of the property has been used, i.e. , 2017-06
+
+**Key Results**
+
+* Zipcodes that client should invest in, in order: **1. 10025 2. 11215 3. 10036 4. 10312 5. 10003**
+* 1 & 2 : In the heart of the city, highest profit gainers, close prximity to International airport, Central Park View
+* From a long term perspective following is best for client:
+* 10025 : Capable of $1299656 profit in 10 years, profits start from the 6th year, On street; Upper West Side, Manhattan
+* 11215 : Capable of $1119200 profit in 10 years, profits start from the 5th year, On street; Park Slope, Brooklyn
+* 10036 : Capable of $572912 profit in 10 years, profits start from the 8th year, On street; Hell's Kitchen, Manhattan
+* 10312 : Capable of $363593 profit in 10 years, profits start from the 5th year, On street; Annadale, Staten Island
+* 10003 : Capable of $324962 profit in 10 years, profits start from the 9th year, On street; Union Square, Manhattan
